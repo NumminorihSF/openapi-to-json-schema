@@ -1,0 +1,90 @@
+#!/usr/bin/env node
+"use strict";
+const fs = require('fs');
+const path = require('path');
+
+const _ = require('lodash');
+const yaml = require('js-yaml');
+const $RefParser = require('json-schema-ref-parser');
+
+const { Client } = require('node-rest-client');
+
+const {
+  API_SPEC_URL,
+  DEST = './dto-spec'
+} = process.env;
+
+
+new Promise(getApiSpec)
+  .then(yamlToJson)
+  .then(parseRef)
+  .then(writeToFs);
+
+function getApiSpec(resolve) {
+  const client = new Client();
+
+  return client.get(API_SPEC_URL, function (data) {
+    return resolve({ text: data.toString() });
+  });
+}
+
+function yamlToJson({ text }) {
+  return Promise.resolve({ text, json: yaml.safeLoad(text) });
+}
+
+function parseRef({ text, json }) {
+  return $RefParser.dereference(json)
+    .then(function(schema) {
+      return Promise.resolve({ text, json: schema });
+    });
+}
+
+
+function writeToFs({ json }) {
+  const paths = {};
+
+  try {
+    fs.mkdirSync(DEST);
+  } catch(e) {
+    if (e.code !== 'EEXIST') {
+      throw e;
+    }
+  }
+
+  function getRealName(name) {
+    const lowerName = name.toLowerCase();
+
+    return Object.keys(paths).find(pathName => pathName.toLowerCase() === lowerName) || name;
+  }
+
+  Object.keys(json.definitions)
+    .map(prevId => {
+      return {prevId, id:_.upperFirst(_.camelCase(prevId)) };
+    })
+    .map(({ prevId, id }) => {
+
+      const schemaToParse = `export const ${id}DtoSchema = ${
+        JSON.stringify(json.definitions[prevId], null, 2)
+        };`;
+
+      return {
+        id,
+        content: [
+          '// @flow',
+          `${schemaToParse}\n`,
+        ].filter(val => val.trim()).join('\n')
+      };
+    })
+    .forEach(({ id, content }) => {
+      const filepath = path.join(DEST, `./${id}DtoSchema.js`);
+
+      fs.writeFile(filepath, content, error => {
+        if (error) {
+          throw error;
+        }
+
+        // console.log(`Wrote ${filepath}`);
+      });
+    });
+}
+
