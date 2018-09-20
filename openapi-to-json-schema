@@ -6,6 +6,7 @@ const path = require('path');
 const _ = require('lodash');
 const yaml = require('js-yaml');
 const $RefParser = require('json-schema-ref-parser');
+const toJsonSchema = require('openapi-schema-to-json-schema');
 
 const { Client } = require('node-rest-client');
 
@@ -16,6 +17,7 @@ const {
 
 
 new Promise(getApiSpec)
+  .then(xNullableToNullable)
   .then(yamlToJson)
   .then(parseRef)
   .then(writeToFs);
@@ -26,6 +28,10 @@ function getApiSpec(resolve) {
   return client.get(API_SPEC_URL, function (data) {
     return resolve({ text: data.toString() });
   });
+}
+
+function xNullableToNullable({ text }) {
+  return Promise.resolve({ text: text.replace(/x-nullable:/g, 'nullable:')})
 }
 
 function yamlToJson({ text }) {
@@ -63,8 +69,13 @@ function writeToFs({ json }) {
     })
     .map(({ prevId, id }) => {
 
+      const schema = toJsonSchema(json.definitions[prevId]);
+
+      // ajv throws cause of this
+      delete schema.$schema;
+
       const schemaToParse = `export const ${id}DtoSchema = ${
-        JSON.stringify(json.definitions[prevId], null, 2)
+        JSON.stringify(schema, null, 2)
         };`;
 
       return {
